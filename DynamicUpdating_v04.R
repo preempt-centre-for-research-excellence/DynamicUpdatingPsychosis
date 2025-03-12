@@ -118,7 +118,7 @@ logLik_test <- function(logLik1, logLik2){
 #################### Load UHR 1000 tables  #####################################
 ################################################################################
 
-uhr1000 <- read.csv("U:/PostDoc/Research/UHR1000+/UHR1000_MasterFile_V02_18032024.csv", 
+uhr1000 <- read.csv("file", 
                     header = TRUE, sep=",")
 
 ################################################################################
@@ -145,12 +145,12 @@ uhr1000[uhr1000$uhr_group == 4 & !is.na(uhr1000$uhr_group), c('uhr_cat')] <- 3
 
 uhr1000$uhr_cat <- as.factor(uhr1000$uhr_cat)
 
-# Extract just Melbourne sample
-uhr1000 <- subset(uhr1000, site == 1)
-
 uhr1000$year <- format(as.Date(uhr1000$assessment_date_0, 
                                format="%d/%m/%Y"),"%Y")
 uhr1000$year <- as.numeric(uhr1000$year)
+
+# Extract just Melbourne sample
+uhr1000 <- subset(uhr1000, site == 1)
 
 # Exclude invdividuals with no follow-up time information
 uhr1000 <- uhr1000[!is.na(uhr1000$transdays),]
@@ -195,20 +195,52 @@ uhr1000 <- uhr1000[,vars]
 # arrange the columns accordingly
 #uhr1000.imputed <- imputed.data[, colnames(uhr1000), drop = FALSE]
 
-uhr1000.imputed <- mice(uhr1000, m = 1, maxit = 30, 
-                    method = "norm", print =  FALSE, seed = 1235)
-
-uhr1000.imputed <- complete(uhr1000.imputed, action = "long", include = FALSE)
-
-
-
-dat_f <- uhr1000.imputed
+dat_f <- uhr1000
 
 dat_f <- dat_f[order(dat_f$year),]
 dat_f <- dat_f[dat_f$year < 2019,]
 
 df_val <- dat_f %>% filter(year>2014)
 df <- dat_f %>% filter(year<2015)
+
+df.imputed <- mice(df, maxit = 0)
+predM <- df.imputed$predictorMatrix
+meth <- df.imputed$method
+
+df.imputed <- mice(df, m = 1, maxit = 30, predictorMatrix = predM, 
+                   method = meth, print =  FALSE, seed = 1235)
+
+df <- complete(df.imputed, action = "long", include = FALSE)
+
+df.2015 <- df_val %>% filter(year == 2015)
+df.2015.imputed <- mice(df.2015, m = 1, maxit = 30, 
+                        predictorMatrix = predM, 
+                        method = meth, print =  FALSE, seed = 1235)
+
+df.2015.imputed <- complete(df.2015.imputed, action = "long", include = FALSE)
+
+df.2016 <- df_val %>% filter(year == 2016)
+df.2016.imputed <- mice(df.2016, m = 1, maxit = 30, 
+                        predictorMatrix = predM, 
+                        method = meth, print =  FALSE, seed = 1235)
+
+df.2016.imputed <- complete(df.2016.imputed, action = "long", include = FALSE)
+
+df.2017 <- df_val %>% filter(year == 2017)
+df.2017.imputed <- mice(df.2017, m = 1, maxit = 30, 
+                        predictorMatrix = predM, 
+                        method = meth, print =  FALSE, seed = 1235)
+
+df.2017.imputed <- complete(df.2017.imputed, action = "long", include = FALSE)
+
+df.2018 <- df_val %>% filter(year == 2018)
+df.2018.imputed <- mice(df.2018, m = 1, maxit = 30, 
+                        predictorMatrix = predM, 
+                        method = meth, print =  FALSE, seed = 1235)
+
+df.2018.imputed <- complete(df.2018.imputed, action = "long", include = FALSE)
+
+df_val <- rbind(df.2015.imputed, df.2016.imputed, df.2017.imputed, df.2018.imputed)
 
 ################################################################################
 #################### Method 1: No updating #####################################
@@ -218,7 +250,50 @@ df <- dat_f %>% filter(year<2015)
 fit <- lrm(transtat ~ caarms_DS_sev_0 + caarms_UTC_sev_0 + gaf_sofas + sans_tot_0, 
            data = df, x=TRUE, y=TRUE)
 
+coef.original <- as.data.frame(t(fit$coefficients))
+coef.recal <- coef.original
+coef.refit <- coef.original
+coef.bayes <- coef.original
+
+coef.original[2:(nrow(df_val)+1),] <- coef.original[rep(seq_len(nrow(coef.original)), times = nrow(df_val)), ]
+
 dat_orig <- df[,c('transtat','year')]
+
+# Set to B=100 and reps=500 to run validation
+B = 100
+reps = 500
+dxy <- numeric(reps)
+slope <- numeric(reps)
+interc <- numeric(reps)
+o_e <- numeric(reps)
+n <- nrow(df)
+fit.val <- validate(fit, method="boot", B=B)
+fit.cal <- calibrate(fit, B=B)
+
+for(i in 1 : reps) {
+  g <- update(fit, subset=sample(1 : n, n, replace=TRUE))
+  v <- validate(g, B=B)
+  
+  cal <- calibrate(fit, B=B)
+  
+  O <- prop.table(table(fit$y))[2]*length(fit$y)
+  E <- mean(attr(cal,'predicted'))*length(fit$y)
+  o_e[i] <- O/E
+  
+  dxy[i] <- v['Dxy', 'index.corrected']
+  slope[i] <- v['Slope', 'index.corrected']
+  interc[i] <- v['Intercept', 'index.corrected']
+}
+quantile(dxy, c(.025, .975))
+quantile(slope, c(.025, .975))
+quantile(interc, c(.025, .975))
+quantile(o_e, c(.025, .975))
+
+mean(dxy)
+mean(slope)
+mean(interc)
+mean(o_e)
+
 # Calculate risk
 dat_orig$risk <- exp(fit$linear.predictors)/(1+exp(fit$linear.predictors))
 
@@ -271,6 +346,7 @@ df_original <- yearly.validation(glm_pred, "a_orig", -0.3, val_alldata)
 # Run model
 fit <- lrm(transtat ~ caarms_DS_sev_0 + caarms_UTC_sev_0 + gaf_sofas + sans_tot_0, 
            data = df, x=TRUE, y=TRUE)
+coef.recal[1,] <- fit$coefficients
 
 # Calculate probabilities in validation data
 lp <- predict(fit, newdata = df_val[vars])
@@ -279,8 +355,9 @@ df_val$lp14 <- lp
 
 df_val15 <- df_val %>% filter(year==2015)
 
-fit <- lrm(transtat ~ lp14, 
-           data = df_val15, x=TRUE, y=TRUE)
+fit <- lrm(transtat ~ lp14, data = df_val15, x=TRUE, y=TRUE)
+coef.recal[(nrow(coef.recal)+1),2:5] <- fit$coefficients[2]*coef.recal[nrow(coef.recal),2:5] 
+coef.recal[(nrow(coef.recal)):(nrow(df.2015.imputed)+nrow(coef.recal)-1),] <- coef.recal[rep(nrow(coef.recal), times = nrow(df.2015.imputed)), ]
 
 lp <- predict(fit, newdata = df_val[,c('lp14')])
 
@@ -291,6 +368,8 @@ df_val16 <- df_val %>% filter(year==2016)
 
 fit <- lrm(transtat ~ lp15, 
            data = df_val16, x=TRUE, y=TRUE)
+coef.recal[(nrow(coef.recal)+1),2:5] <- fit$coefficients[2]*coef.recal[nrow(coef.recal),2:5] 
+coef.recal[(nrow(coef.recal)):(nrow(df.2016.imputed)+nrow(coef.recal)-1),] <- coef.recal[rep(nrow(coef.recal), times = nrow(df.2016.imputed)), ]
 
 lp <- predict(fit, newdata = df_val[,c('lp15')])
 
@@ -301,6 +380,8 @@ df_val17 <- df_val %>% filter(year==2017)
 
 fit <- lrm(transtat ~ lp16, 
            data = df_val17, x=TRUE, y=TRUE)
+coef.recal[(nrow(coef.recal)+1),2:5] <- fit$coefficients[2]*coef.recal[nrow(coef.recal),2:5] 
+coef.recal[(nrow(coef.recal)):(nrow(df.2017.imputed)+nrow(coef.recal)-1),] <- coef.recal[rep(nrow(coef.recal), times = nrow(df.2017.imputed)), ]
 
 lp <- predict(fit, newdata = df_val[,c('lp16')])
 
@@ -312,6 +393,8 @@ df_val18 <- df_val %>% filter(year==2018)
 
 fit <- lrm(transtat ~ lp17, 
            data = df_val18, x=TRUE, y=TRUE)
+coef.recal[(nrow(coef.recal)+1),2:5] <- fit$coefficients[2]*coef.recal[nrow(coef.recal),2:5] 
+coef.recal[(nrow(coef.recal)):(nrow(df.2018.imputed)+nrow(coef.recal)-1),] <- coef.recal[rep(nrow(coef.recal), times = nrow(df.2018.imputed)), ]
 
 lp <- predict(fit, newdata = df_val[,c('lp17')])
 
@@ -359,11 +442,13 @@ df_recal <- yearly.validation(glm_pred, "b_recal", -0.1, val_alldata)
 #################### Method 3: Continuous refitting ############################
 ################################################################################
 
-df_val <- dat_f %>% filter(year>2014)
+#df_val <- dat_f %>% filter(year>2014)
 
 # Run model
 fit <- lrm(transtat ~ caarms_DS_sev_0 + caarms_UTC_sev_0 + gaf_sofas + sans_tot_0, 
            data = df, x=TRUE, y=TRUE)
+coef.refit[1,] <- fit$coefficients
+
 
 # Calculate probabilities in validation data
 p_glm <- predict(fit, newdata = df_val[vars])
@@ -372,17 +457,20 @@ p_glm <- as.data.frame(p_glm)
 dat_train <- na.omit(df[vars])
 dat_val <- na.omit(df_val[vars])
 
-for(i in c(1:(nrow(df_val)-2))){
+for(i in c(1:(nrow(df_val)-1))){
   
-  dat <- rbind(dat_train[i:nrow(dat_train),], dat_val[1:i,])
+  dat <- rbind(dat_train[(i+1):nrow(dat_train),], dat_val[1:i,])
   
   fit <- lrm(transtat ~ caarms_DS_sev_0 + caarms_UTC_sev_0 + gaf_sofas + sans_tot_0, 
              data = dat, x=TRUE, y=TRUE)
+  coef.refit[(i+1),] <- fit$coefficients 
 
   # Calculate probabilities in validation data
   p_glm[(i+1):nrow(p_glm),] <- predict(fit, newdata = df_val[(i+1):nrow(dat_val),
                                                              vars])
 }
+
+coef.refit[(nrow(coef.refit)+1),] <- fit$coefficients 
 
 glm_pred <- p_glm
 
@@ -422,6 +510,8 @@ df_refit <- yearly.validation(glm_pred, "c_refit", 0.1, val_alldata)
 ################################################################################
 ### Start with DM with forgetting
 
+dat_f <- rbind(df[vars], df_val[vars])
+
 x <- dat_f[c("caarms_DS_sev_0", "caarms_UTC_sev_0", "gaf_sofas", "sans_tot_0")]
 x <- as.matrix(x)
 y <- dat_f$transtat
@@ -435,9 +525,10 @@ betas_dm <- t(as.data.frame(dma.test$theta))
 dm <- matrix(betas_dm,nrow = dim(dat_f)[1],ncol = 5)
 
 # drop last coef obs
-dm[525,] <- dm[526,]
+#dm[525,] <- dm[526,]
 
 dm_val <- dm[(dim(dm)[1]-dim(df_val)[1]+1):(dim(dm)[1]),1:5]
+coef.bayes[2:(nrow(dm_val)+1),] <- dm_val
 
 # generate val data with variables in DM and add intercept term to val data
 x <- df_val[vars]
@@ -506,8 +597,8 @@ df_long$intercept <- c(rep(0,12), rep(1,36))
 g <- ggplot(df_long, aes(x=year, y=pm_num, color=mod)) + geom_point(shape=16,size=3) +
   geom_segment(aes(x = year, y = lower, xend = year, yend = upper, color=mod), size = 1, data = df_long)
 
-g.labs <- c("Calibration-in-the-large", "Calibration slope", "Discrimination", "Observed-expected ratio")
-names(g.labs) <- c("citl","c_slope", "disc", "o_e")
+g.labs <- c("Discrimination", "Observed-expected ratio", "Calibration-in-the-large", "Calibration slope")
+names(g.labs) <- c("disc", "o_e", "citl","c_slope")
 
 g + facet_wrap(~ pm, labeller = labeller(pm = g.labs), scales = "free")  + 
   scale_color_manual(labels = c("Original model",  "Yearly recalibration", "Refitting", "Dynamic Updating"),
@@ -543,7 +634,7 @@ for(i in c(1:4)){
 logLik_p
 #### Save results ####
 
-write.csv(df_plot, "U:/PostDoc/Research/DynamicUpdating/results.csv", col.names = TRUE)
+write.csv(df_plot, "path", col.names = TRUE)
 
 #### Plot calibration ####
 
@@ -580,7 +671,7 @@ cal.plot <- ggplot(cal.all, aes(x = x, y = y, color = mod)) +
         axis.text.y = element_text(size = 13),
         panel.grid.major.y = element_line(),
         panel.grid.minor.y = element_line()) + 
-        guides(color = guide_legend(nrow = 1)) +
+        guides(color = guide_legend(nrow = 2)) +
   theme(legend.position="bottom") 
 
 
@@ -626,6 +717,121 @@ dca.plot <- ggplot(dca.all, aes(x = threshold, y = net_benefit, color = variable
   theme(legend.position="bottom") 
 
 ggarrange(cal.plot, dca.plot, ncol= 2)
+
+#### Coefficient plot ####
+
+coef.bayes$year <- c(2014,rep(2015,nrow(df.2015)),rep(2016,nrow(df.2016)),rep(2017,nrow(df.2017)),rep(2018,nrow(df.2018)))
+coef.bayes$x <- c(1:nrow(coef.bayes))
+coef.bayes$method <- 'd_bayes'
+coef.original$year <- c(2014,rep(2015,nrow(df.2015)),rep(2016,nrow(df.2016)),rep(2017,nrow(df.2017)),rep(2018,nrow(df.2018)))
+coef.original$x <- c(1:nrow(coef.original))
+coef.original$method <- 'a_original'
+coef.recal$year <- c(2014,rep(2015,nrow(df.2015)),rep(2016,nrow(df.2016)),rep(2017,nrow(df.2017)),rep(2018,nrow(df.2018)))
+coef.recal$x <- c(1:nrow(coef.recal))
+coef.recal$method <- 'b_recal'
+coef.refit$year <- c(2014,rep(2015,nrow(df.2015)),rep(2016,nrow(df.2016)),rep(2017,nrow(df.2017)),rep(2018,nrow(df.2018)))
+coef.refit$x <- c(1:nrow(coef.refit))
+coef.refit$method <- 'c_refit'
+
+coef.all <- rbind(coef.original, coef.recal, coef.refit, coef.bayes)
+coef.all$year <- as.factor(coef.all$year)
+coef.all$method <- as.factor(coef.all$method)
+
+caarms_ds <- ggplot(coef.all, aes(x = x, y = caarms_DS_sev_0, color = method)) +
+  geom_line(linewidth = 1.5) +
+  scale_x_continuous(name = "Year", breaks = c(0,nrow(df.2015),nrow(df.2015)+nrow(df.2016),nrow(df.2015)+nrow(df.2016)+nrow(df.2017)),
+                     labels = c("2015", "2016", "2017", "2018")) +
+  scale_y_continuous(name="CAARMS Disorganized Speech: coefficient", breaks = c(0.00, 0.1, 0.2, 0.3), limits=c(0.0, 0.3)) +
+  scale_color_manual(labels = c("Original model",  "Yearly recalibration", "Refitting", "Dynamic Updating"),
+                     values = c("#374e55",  "#00a1d5", "#b24745", "#df8f44")) +
+  labs(colour = "") + 
+  theme_classic() +
+  theme(plot.subtitle = element_text(size = 14),
+        plot.title = element_text(size = 16, hjust = 0.5, face="bold", margin=margin(b = 20, unit = "pt")),
+        axis.title.x = element_text(size = 13),
+                                    axis.title.y = element_text(size = 13),
+                                    legend.text = element_text(size = 13),
+                                    legend.title = element_text(size = 13),
+                                    axis.text.x = element_text(size = 13),
+                                    axis.text.y = element_text(size = 13),
+                                    panel.grid.major.y = element_line(),
+                                    panel.grid.minor.y = element_line(),
+                                    panel.grid.major.x = element_line()) +
+          guides(color = guide_legend(nrow = 1)) +
+  theme(legend.position="bottom") 
+
+caarms_utc <- ggplot(coef.all, aes(x = x, y = caarms_UTC_sev_0, color = method)) +
+  geom_line(linewidth = 1.5) +
+  scale_x_continuous(name = "Year", breaks = c(0,nrow(df.2015),nrow(df.2015)+nrow(df.2016),nrow(df.2015)+nrow(df.2016)+nrow(df.2017)),
+                     labels = c("2015", "2016", "2017", "2018")) +
+  scale_y_continuous(name="CAARMS Unusual Thought Content: coefficient", breaks = c(0.00, 0.2, 0.4, 0.6), 
+                     limits=c(0.0, 0.6)) +
+  scale_color_manual(labels = c("Original model",  "Yearly recalibration", "Refitting", "Dynamic Updating"),
+                     values = c("#374e55",  "#00a1d5", "#b24745", "#df8f44")) +
+  labs(colour = "") + 
+  theme_classic() +
+  theme(plot.subtitle = element_text(size = 14),
+        plot.title = element_text(size = 16, hjust = 0.5, face="bold", margin=margin(b = 20, unit = "pt")),
+        axis.title.x = element_text(size = 13),
+                                    axis.title.y = element_text(size = 13),
+                                    legend.text = element_text(size = 13),
+                                    legend.title = element_text(size = 13),
+                                    axis.text.x = element_text(size = 13),
+                                    axis.text.y = element_text(size = 13),
+                                    panel.grid.major.y = element_line(),
+                                    panel.grid.minor.y = element_line(),
+                                    panel.grid.major.x = element_line()) +
+          guides(color = guide_legend(nrow = 1)) +
+  theme(legend.position="bottom") 
+
+sofas_plot <- ggplot(coef.all, aes(x = x, y = gaf_sofas, color = method)) +
+  geom_line(linewidth = 1.5) +
+  scale_x_continuous(name = "Year", breaks = c(0,nrow(df.2015),nrow(df.2015)+nrow(df.2016),nrow(df.2015)+nrow(df.2016)+nrow(df.2017)),
+                     labels = c("2015", "2016", "2017", "2018")) +
+  scale_y_continuous(name="SOFAS: coefficient", breaks = c(-0.05, -0.025, 0.0), limits=c(-0.05, 0.0)) +
+  scale_color_manual(labels = c("Original model",  "Yearly recalibration", "Refitting", "Dynamic Updating"),
+                     values = c("#374e55",  "#00a1d5", "#b24745", "#df8f44")) +
+  labs(colour = "") + 
+  theme_classic() +
+  theme(plot.subtitle = element_text(size = 14),
+        plot.title = element_text(size = 16, hjust = 0.5, face="bold", margin=margin(b = 20, unit = "pt")),
+        axis.title.x = element_text(size = 13),
+                                    axis.title.y = element_text(size = 13),
+                                    legend.text = element_text(size = 13),
+                                    legend.title = element_text(size = 13),
+                                    axis.text.x = element_text(size = 13),
+                                    axis.text.y = element_text(size = 13),
+                                    panel.grid.major.y = element_line(),
+                                    panel.grid.minor.y = element_line(),
+                                    panel.grid.major.x = element_line()) +
+          guides(color = guide_legend(nrow = 1)) +
+  theme(legend.position="bottom") 
+
+sans_plot <- ggplot(coef.all, aes(x = x, y = sans_tot_0, color = method)) +
+  geom_line(linewidth = 1.5) +
+  scale_x_continuous(name = "Year", breaks = c(0,nrow(df.2015),nrow(df.2015)+nrow(df.2016),nrow(df.2015)+nrow(df.2016)+nrow(df.2017)),
+                     labels = c("2015", "2016", "2017", "2018")) +
+  scale_y_continuous(name="SANS Total Score: coefficient", breaks = c(0.00, 0.01, 0.02, 0.03), limits=c(0.0, 0.03)) +
+  scale_color_manual(labels = c("Original model",  "Yearly recalibration", "Refitting", "Dynamic Updating"),
+                     values = c("#374e55",  "#00a1d5", "#b24745", "#df8f44")) +
+  labs(colour = "") + 
+  theme_classic() +
+  theme(plot.subtitle = element_text(size = 14),
+        plot.title = element_text(size = 16, hjust = 0.5, face="bold", margin=margin(b = 20, unit = "pt")),
+        axis.title.x = element_text(size = 13),
+        axis.title.y = element_text(size = 13),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        axis.text.x = element_text(size = 13),
+        axis.text.y = element_text(size = 13),
+        panel.grid.major.y = element_line(),
+        panel.grid.minor.y = element_line(),
+        panel.grid.major.x = element_line()) +
+  guides(color = guide_legend(nrow = 1)) +
+  theme(legend.position="bottom") 
+
+ggarrange(caarms_utc, caarms_ds, sofas_plot, sans_plot, ncol= 2, nrow = 2, common.legend = TRUE, legend = "bottom")
+
 
 #### UHR1000 descriptive table ####
 
@@ -673,8 +879,9 @@ table_desc <- uhr1000.org %>%
   modify_header(label = "Variable") %>% # update the column header
   bold_labels()
 
-table_desc %>%
-  as_flex_table() %>%
-  flextable::save_as_docx(path = "U:/PostDoc/Research/DynamicUpdating/descriptive_table.docx")
+#table_desc %>%
+#  as_flex_table() %>%
+#  flextable::save_as_docx(path = "path")
 
 pairwise.wilcox.test(uhr1000.org$assessment_age, uhr1000.org$year2, p.adjust.method = "bonferroni")
+
