@@ -1,4 +1,4 @@
-# DynamicUpdatingPsychosis
+# Dynamic updating of psychosis prediction models in individuals at ultra high-risk of psychosis
 
 ## Introduction
 Can model updating methods prevent critical biases in psychosis risk calculators caused by temporal changes? In this study with 784 individuals at ultra high-risk (UHR) of psychosis, Bayesian updating techniques optimally updated a psychosis risk calculator compared to no updating, recalibration, or continual refitting. Without updating, models were mis-calibrated across validation years leading to largely overestimated psychosis risk scores. Temporal biases of risk calculators can be corrected, yet there is a need for continual monitoring to avoid the potential for harm caused by suboptimal decisions on the basis of existing prediction models.
